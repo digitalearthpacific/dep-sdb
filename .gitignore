@@ -168,3 +168,4 @@ cython_debug/
 *.gpkg
 *.csv
 *.joblib
+models/*.txt
