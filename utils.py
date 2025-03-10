@@ -4,7 +4,30 @@ from odc.algo import mask_cleanup
 from odc.stac import load
 from pystac import Item
 from sklearn.base import RegressorMixin
-from xarray import Dataset, DataArray
+from xarray import DataArray, Dataset
+
+
+class Location:
+    def __init__(self, bbox):
+        self.bbox = bbox
+
+    def __str__(self):
+        return f"{self.bbox}"
+
+
+class Locations:
+    def __init__(self):
+        self.nadi = Location([177.20, -17.85, 177.50, -17.65])
+        self.tuvalu = Location([179.020, -8.665, 179.218, -8.413])
+        self.suva = Location([178.400, -18.200, 178.600, -18.000])
+        self.malolo = Location([177.05276, -17.80173, 177.27512, -17.64840])
+
+    # Print locations
+    def __str__(self):
+        return f"Nadi: {self.nadi}, Suva: {self.suva}, Tuvalu: {self.tuvalu}, Malolo: {self.malolo}"
+
+
+locations = Locations()
 
 
 def make_indices(geomad: Dataset) -> Dataset:
@@ -24,6 +47,9 @@ def make_indices(geomad: Dataset) -> Dataset:
     geomad["bg"] = scaled.blue / scaled.green
     # Blue over red index
     geomad["br"] = scaled.blue / scaled.red
+
+    # Natural log of blue/green
+    geomad["ln_bg"] = np.log(scaled.blue / scaled.green)
 
     # # Lyzenga... seems problematic
     # geomad["lyzenga"] = np.log(scaled.green / scaled.blue)
@@ -66,7 +92,7 @@ def mask_with_gebco(
         return masked
 
 
-def mask_deeps(
+def mask_deeps_stumpf(
     ds: Dataset,
     ds_to_mask: Dataset | None = None,
     threshold: float | None = None,
@@ -93,6 +119,34 @@ def mask_deeps(
         mask = ds.stumpf.isnull()
         mask = mask_cleanup(mask, [["erosion", 20], ["dilation", 10]])
         mask = ~mask
+
+    to_mask = ds if ds_to_mask is None else ds_to_mask
+    masked = to_mask.where(mask)
+
+    if return_mask:
+        return masked, mask
+    else:
+        return masked
+
+
+def mask_deeps_ln_bg(
+    ds: Dataset,
+    ds_to_mask: Dataset | None = None,
+    threshold: float = 0.0,
+    return_mask: bool = False,
+) -> Dataset:
+    """Masks out deep water pixels based on the natural log of the blue/green
+
+    Args:
+        ds (Dataset): Dataset to mask
+        ds_to_mask (Dataset | None, optional): Dataset to mask. Defaults to None.
+        return_mask (bool, optional): If True, returns the mask as well. Defaults to False.
+
+    Returns:
+        Dataset: Masked dataset
+    """
+    mask = ds.ln_bg < threshold
+    mask = mask_cleanup(mask, [["erosion", 10], ["dilation", 10]])
 
     to_mask = ds if ds_to_mask is None else ds_to_mask
     masked = to_mask.where(mask)
