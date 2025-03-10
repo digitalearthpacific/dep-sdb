@@ -169,3 +169,4 @@ cython_debug/
 *.csv
 *.joblib
 models/*.txt
+*.zip

@@ -21,6 +21,7 @@ class Locations:
         self.tuvalu = Location([179.020, -8.665, 179.218, -8.413])
         self.suva = Location([178.400, -18.200, 178.600, -18.000])
         self.malolo = Location([177.05276, -17.80173, 177.27512, -17.64840])
+        self.apia = Location([-171.7, -13.9, -171.9, -13.7])
 
     # Print locations
     def __str__(self):
@@ -40,8 +41,8 @@ def make_indices(geomad: Dataset) -> Dataset:
     geomad["ndti"] = (scaled.red - scaled.green) / (scaled.red + scaled.green)
 
     # Stumpf, calculate off non-scaled data to remove nan/infinities
-    geomad["stumpf"] = np.log(geomad.green - geomad.blue) / np.log(
-        geomad.green + geomad.blue
+    geomad["stumpf"] = np.log(np.abs(scaled.green - scaled.blue)) / np.log(
+        scaled.green + scaled.blue
     )
     # Blue over green index
     geomad["bg"] = scaled.blue / scaled.green
@@ -92,34 +93,13 @@ def mask_with_gebco(
         return masked
 
 
-def mask_deeps_stumpf(
+def apply_mask(
     ds: Dataset,
+    mask: DataArray,
     ds_to_mask: Dataset | None = None,
-    threshold: float | None = None,
     return_mask: bool = False,
 ) -> Dataset:
-    """Masks out deep water pixels based on the Stumpf index. If a threshold is provided, the Stumpf index is used to
-    create a mask. If no threshold is provided, the Stumpf index is used to create a mask where it is NaN.
-
-    Args:
-        ds (Dataset): Dataset to mask
-        ds_to_mask (Dataset | None, optional): Dataset to mask. Defaults to None.
-        threshold (float | None, optional): Threshold for the Stumpf index. Defaults to None.
-        return_mask (bool, optional): If True, returns the mask as well. Defaults to False.
-
-    Returns:
-        Dataset: Masked dataset
-    """
-
-    if threshold is not None:
-        stumpf = np.log(ds.green - ds.blue) / np.log(ds.green + ds.blue)
-        mask = stumpf < threshold
-        mask = mask_cleanup(mask, [["erosion", 20], ["dilation", 10]])
-    else:
-        mask = ds.stumpf.isnull()
-        mask = mask_cleanup(mask, [["erosion", 20], ["dilation", 10]])
-        mask = ~mask
-
+    """Applies a mask to a dataset"""
     to_mask = ds if ds_to_mask is None else ds_to_mask
     masked = to_mask.where(mask)
 
@@ -129,10 +109,33 @@ def mask_deeps_stumpf(
         return masked
 
 
+def mask_deeps_stumpf(
+    ds: Dataset,
+    ds_to_mask: Dataset | None = None,
+    threshold: float = 1.9,
+    return_mask: bool = False,
+) -> Dataset:
+    """Masks out deep water pixels based on the Stumpf index.
+
+    Args:
+        ds (Dataset): Dataset to mask
+        ds_to_mask (Dataset | None, optional): Dataset to mask. Defaults to None.
+        threshold (float | None, optional): Threshold for the Stumpf index. Defaults to 1.9.
+        return_mask (bool, optional): If True, returns the mask as well. Defaults to False.
+
+    Returns:
+        Dataset: Masked dataset
+    """
+    mask = ds.stumpf > threshold
+    mask = mask_cleanup(mask, [["erosion", 10], ["dilation", 10]])
+
+    return apply_mask(ds, mask, ds_to_mask, return_mask)
+
+
 def mask_deeps_ln_bg(
     ds: Dataset,
     ds_to_mask: Dataset | None = None,
-    threshold: float = 0.0,
+    threshold: float = 0.2,
     return_mask: bool = False,
 ) -> Dataset:
     """Masks out deep water pixels based on the natural log of the blue/green
@@ -140,6 +143,7 @@ def mask_deeps_ln_bg(
     Args:
         ds (Dataset): Dataset to mask
         ds_to_mask (Dataset | None, optional): Dataset to mask. Defaults to None.
+        threshold (float, optional): Threshold for the natural log of the blue/green. Defaults to 0.2.
         return_mask (bool, optional): If True, returns the mask as well. Defaults to False.
 
     Returns:
@@ -148,13 +152,22 @@ def mask_deeps_ln_bg(
     mask = ds.ln_bg < threshold
     mask = mask_cleanup(mask, [["erosion", 10], ["dilation", 10]])
 
-    to_mask = ds if ds_to_mask is None else ds_to_mask
-    masked = to_mask.where(mask)
+    return apply_mask(ds, mask, ds_to_mask, return_mask)
 
-    if return_mask:
-        return masked, mask
-    else:
-        return masked
+
+def mask_deeps(
+    ds: Dataset,
+    ds_to_mask: Dataset | None = None,
+    return_mask: bool = False,
+    stumpf_threshold: float = 2.0,
+    ln_bg_threshold: float = 0.2,
+) -> Dataset:
+    _, mask_stumpf = mask_deeps_stumpf(ds, threshold=stumpf_threshold, return_mask=True)
+    _, mask_ln_bg = mask_deeps_ln_bg(ds, threshold=ln_bg_threshold, return_mask=True)
+
+    mask = mask_stumpf | mask_ln_bg
+
+    return apply_mask(ds, mask, ds_to_mask, return_mask)
 
 
 def mask_land(
@@ -173,15 +186,10 @@ def mask_land(
     land = (ds.mndwi + ds.ndwi).squeeze() < 0
     mask = mask_cleanup(land, [["dilation", 5], ["erosion", 5]])
 
-    to_mask = ds if ds_to_mask is None else ds_to_mask
-
     # Inverting the mask here
-    masked = to_mask.where(~mask)
+    mask = ~mask
 
-    if return_mask:
-        return masked, mask
-    else:
-        return masked
+    return apply_mask(ds, mask, ds_to_mask, return_mask)
 
 
 def do_prediction(
