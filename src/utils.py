@@ -8,24 +8,31 @@ from xarray import DataArray, Dataset
 
 
 class Location:
-    def __init__(self, bbox):
+    def __init__(self, bbox, name):
         self.bbox = bbox
+        self.name = name
 
     def __str__(self):
         return f"{self.bbox}"
 
 
+locations_list = [
+    Location([177.20, -17.85, 177.50, -17.65], "nadi"),
+    Location([179.020, -8.665, 179.218, -8.413], "tuvalu"),
+    Location([178.400, -18.200, 178.600, -18.000], "suva"),
+    Location([177.05276, -17.80173, 177.27512, -17.64840], "malolo"),
+    Location([-171.7, -13.9, -171.9, -13.7], "apia"),
+    Location([-159.85, -21.3, -159.7, -21.15], "rarotonga")
+]
+
 class Locations:
     def __init__(self):
-        self.nadi = Location([177.20, -17.85, 177.50, -17.65])
-        self.tuvalu = Location([179.020, -8.665, 179.218, -8.413])
-        self.suva = Location([178.400, -18.200, 178.600, -18.000])
-        self.malolo = Location([177.05276, -17.80173, 177.27512, -17.64840])
-        self.apia = Location([-171.7, -13.9, -171.9, -13.7])
+        for location in locations_list:
+            setattr(self, location.name, location)
 
     # Print locations
     def __str__(self):
-        return f"Nadi: {self.nadi}, Suva: {self.suva}, Tuvalu: {self.tuvalu}, Malolo: {self.malolo}"
+        return "\n".join([str(location) for location in locations_list])
 
 
 locations = Locations()
@@ -112,7 +119,7 @@ def apply_mask(
 def mask_deeps_stumpf(
     ds: Dataset,
     ds_to_mask: Dataset | None = None,
-    threshold: float = 1.9,
+    threshold: float = 2.0,
     return_mask: bool = False,
 ) -> Dataset:
     """Masks out deep water pixels based on the Stumpf index.
@@ -127,7 +134,7 @@ def mask_deeps_stumpf(
         Dataset: Masked dataset
     """
     mask = ds.stumpf > threshold
-    mask = mask_cleanup(mask, [["erosion", 10], ["dilation", 10]])
+    mask = mask_cleanup(mask, [["erosion", 5], ["dilation", 5]])
 
     return apply_mask(ds, mask, ds_to_mask, return_mask)
 
@@ -150,7 +157,7 @@ def mask_deeps_ln_bg(
         Dataset: Masked dataset
     """
     mask = ds.ln_bg < threshold
-    mask = mask_cleanup(mask, [["erosion", 10], ["dilation", 10]])
+    mask = mask_cleanup(mask, [["erosion", 5], ["dilation", 5]])
 
     return apply_mask(ds, mask, ds_to_mask, return_mask)
 
