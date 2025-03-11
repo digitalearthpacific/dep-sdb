@@ -130,7 +130,7 @@ def main(
 
         log.info("Unzipping model")
         with ZipFile(model_zip, "r") as zip_ref:
-            zip_ref.extractall("models")
+            zip_ref.extractall()
 
     # Open the model
     model = joblib.load(model_zip.replace(".zip", ".joblib"))
