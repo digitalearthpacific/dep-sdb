@@ -22,8 +22,9 @@ locations_list = [
     Location([178.400, -18.200, 178.600, -18.000], "suva"),
     Location([177.05276, -17.80173, 177.27512, -17.64840], "malolo"),
     Location([-171.7, -13.9, -171.9, -13.7], "apia"),
-    Location([-159.85, -21.3, -159.7, -21.15], "rarotonga")
+    Location([-159.85, -21.3, -159.7, -21.15], "rarotonga"),
 ]
+
 
 class Locations:
     def __init__(self):
