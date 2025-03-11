@@ -165,3 +165,8 @@ cython_debug/
 *.tif
 *.xml
 *.gpkg-*
+*.gpkg
+*.csv
+*.joblib
+models/*.txt
+*.zip
