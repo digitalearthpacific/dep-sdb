@@ -54,20 +54,17 @@ class SDBProcessor(S2Processor):
 
         data = xr.drop_vars(["scl"])
 
-        def predict_for_day(day):
-            return do_prediction(data.sel(time=day), self.model).compute()
+        predictions_list = []
 
-        with ThreadPoolExecutor() as executor:
-            predictions_list = list(
-                executor.map(predict_for_day, data.time), total=len(data.time)
+        for day in data.time:
+            predictions_list.append(
+                do_prediction(data.sel(time=day), self.model).compute()
             )
 
         # Concatenate them all together again
         predictions = xr.concat(predictions_list, dim="time").to_dataset(
             name="elevation"
         )
-
-        predictions = predictions.compute()
 
         # Clean up the data by removing pixels that only had predictions sometimes
         output = predictions.elevation.count(dim="time").to_dataset(name="count")
