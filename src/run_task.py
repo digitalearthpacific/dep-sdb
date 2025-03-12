@@ -64,9 +64,10 @@ class SDBProcessor(S2Processor):
         predictions_list = []
 
         for day in data.time:
-            predictions_list.append(
-                do_prediction(data.sel(time=day), self.model).compute()
-            )
+            # Load day into memory
+            day_data = data.sel(time=day).compute()
+            # Do prediction on in-memory data
+            predictions_list.append(do_prediction(day_data, self.model))
 
         # Concatenate them all together again
         predictions = xr.concat(predictions_list, dim="time").to_dataset(
