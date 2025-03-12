@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from logging import INFO, Formatter, Logger, StreamHandler, getLogger
 from pathlib import Path
 from zipfile import ZipFile
@@ -63,11 +64,14 @@ class SDBProcessor(S2Processor):
 
         predictions_list = []
 
-        for day in data.time:
+        def process_day(day):
             # Load day into memory
             day_data = data.sel(time=day).compute()
             # Do prediction on in-memory data
-            predictions_list.append(do_prediction(day_data, self.model))
+            return do_prediction(day_data, self.model)
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            predictions_list = list(executor.map(process_day, data.time))
 
         # Concatenate them all together again
         predictions = xr.concat(predictions_list, dim="time").to_dataset(

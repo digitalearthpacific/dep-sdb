@@ -222,8 +222,7 @@ def do_prediction(
     stacked_arrays = stacked_arrays.where(stacked_arrays != float("-inf"))
 
     # Replace any NaN values with 0
-    # TODO: Make sure that each column is labelled with the correct band name
-    stacked_arrays = stacked_arrays.squeeze().fillna(0).transpose()
+    stacked_arrays = stacked_arrays.squeeze().fillna(0).transpose().to_pandas()
 
     # Predict the classes
     predicted = model.predict(stacked_arrays)
