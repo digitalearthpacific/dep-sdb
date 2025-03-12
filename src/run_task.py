@@ -7,6 +7,7 @@ import boto3
 import joblib
 import requests
 import typer
+import xarray as xr
 from dask.distributed import Client
 from dep_tools.aws import object_exists
 from dep_tools.exceptions import EmptyCollectionError
@@ -43,15 +44,15 @@ class SDBProcessor(S2Processor):
         super().__init__(send_area_to_processor, **preprocessor_args, **kwargs)
         self.model = model
 
-    def process(self, xr: DataArray) -> Dataset:
+    def process(self, input: DataArray) -> Dataset:
         # Raise an exception if there's not enough data
-        if xr.time.size < 5:
+        if input.time.size < 5:
             raise EmptyCollectionError(
-                f"{xr.time.size} is less than {self.min_timesteps} timesteps"
+                f"{input.time.size} is less than {self.min_timesteps} timesteps"
             )
 
         # Drop the SCL band
-        data = xr.drop_vars(["scl"])
+        data = input.drop_vars(["scl"])
 
         # Add the fancy indices
         data = make_indices(data)
@@ -62,18 +63,16 @@ class SDBProcessor(S2Processor):
         # # Mask deep water
         data = mask_deeps(data)
 
-        loaded = data.compute()
-
         predictions_list = []
 
         def process_day(day):
             # Load day into memory
-            day_data = loaded.sel(time=day)
+            day_data = data.sel(time=day).compute()
             # Do prediction on in-memory data
             return do_prediction(day_data, self.model)
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            predictions_list = list(executor.map(process_day, loaded.time))
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            predictions_list = list(executor.map(process_day, data.time))
 
         # Concatenate them all together again
         predictions = xr.concat(predictions_list, dim="time").to_dataset(
