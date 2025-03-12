@@ -62,16 +62,18 @@ class SDBProcessor(S2Processor):
         # # Mask deep water
         data = mask_deeps(data)
 
+        loaded = data.compute()
+
         predictions_list = []
 
         def process_day(day):
             # Load day into memory
-            day_data = data.sel(time=day).compute()
+            day_data = loaded.sel(time=day)
             # Do prediction on in-memory data
             return do_prediction(day_data, self.model)
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            predictions_list = list(executor.map(process_day, data.time))
+            predictions_list = list(executor.map(process_day, loaded.time))
 
         # Concatenate them all together again
         predictions = xr.concat(predictions_list, dim="time").to_dataset(
