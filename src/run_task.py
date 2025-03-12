@@ -1,10 +1,10 @@
-from concurrent.futures import ThreadPoolExecutor
 from logging import INFO, Formatter, Logger, StreamHandler, getLogger
 from pathlib import Path
 from zipfile import ZipFile
 
 import boto3
 import joblib
+import requests
 import typer
 from dask.distributed import Client
 from dep_tools.aws import object_exists
@@ -12,18 +12,15 @@ from dep_tools.exceptions import EmptyCollectionError
 from dep_tools.grids import PACIFIC_GRID_10
 from dep_tools.loaders import OdcLoader
 from dep_tools.namers import S3ItemPath
+from dep_tools.processors import S2Processor
 from dep_tools.searchers import PystacSearcher
 from dep_tools.stac_utils import StacCreator
 from dep_tools.task import AwsStacTask as Task
 from dep_tools.writers import AwsDsCogWriter
 from odc.stac import configure_s3_access
 from typing_extensions import Annotated
-from dep_tools.processors import S2Processor
+from utils import do_prediction, make_indices, mask_deeps, mask_land
 from xarray import DataArray, Dataset
-
-from utils import do_prediction
-
-import requests
 
 S2_BANDS = [
     "nir",
@@ -52,7 +49,17 @@ class SDBProcessor(S2Processor):
                 f"{xr.time.size} is less than {self.min_timesteps} timesteps"
             )
 
+        # Drop the SCL band
         data = xr.drop_vars(["scl"])
+
+        # Add the fancy indices
+        data = make_indices(data)
+
+        # Mask land
+        data = mask_land(data)
+
+        # # Mask deep water
+        data = mask_deeps(data)
 
         predictions_list = []
 
