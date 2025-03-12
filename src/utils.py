@@ -1,10 +1,28 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import xarray as xr
+from dep_tools.exceptions import EmptyCollectionError
+from dep_tools.processors import S2Processor
 from odc.algo import mask_cleanup
 from odc.stac import load
 from pystac import Item
 from sklearn.base import RegressorMixin
 from xarray import DataArray, Dataset
+
+
+S2_BANDS = [
+    "nir",
+    "red",
+    "blue",
+    "green",
+    "nir08",
+    "nir09",
+    "swir16",
+    "swir22",
+    "coastal",
+    "scl",
+]
 
 
 class Location:
@@ -37,6 +55,64 @@ class Locations:
 
 
 locations = Locations()
+
+
+class SDBProcessor(S2Processor):
+    def __init__(self, model, preprocessor_args, **kwargs):
+        send_area_to_processor: bool = False
+        super().__init__(send_area_to_processor, **preprocessor_args, **kwargs)
+        self.model = model
+
+    def process(self, input: DataArray) -> Dataset:
+        # Drop the SCL band, because the pre-processor should have masked clouds
+        data = input.drop_vars(["scl"])
+
+        # Add the fancy indices
+        data = make_indices(data)
+
+        # Mask land
+        data = mask_land(data)
+
+        # # Mask deep water
+        data = mask_deeps(data)
+
+        predictions_list = []
+
+        def process_day(day):
+            # Load day into memory
+            day_data = data.sel(time=day).compute()
+            # Do prediction on in-memory data
+            return do_prediction(day_data, self.model)
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            predictions_list = list(executor.map(process_day, data.time))
+
+        # Concatenate them all together again
+        predictions = xr.concat(predictions_list, dim="time").to_dataset(
+            name="elevation"
+        )
+
+        # Clean up the data by removing pixels that only had predictions sometimes
+        output = predictions.elevation.count(dim="time").to_dataset(name="count")
+        total = len(predictions.time)
+
+        # At least X% of the time there was a prediction
+        mask = output["count"] > (total * 0.15)
+
+        output["mean"] = predictions.elevation.mean(dim="time")
+        output["stdev"] = predictions.elevation.std(dim="time")
+        output["depth"] = output["mean"].where(mask)
+
+        output["count"] = output["count"].astype("uint8")
+        output["mean"] = output["mean"].astype("float32")
+        output["stdev"] = output["stdev"].astype("float32")
+        output["depth"] = output["depth"].astype("float32")
+
+        # Set count to 255 if it's 0
+        output["count"].attrs = {"nodata": 255}
+        output["count"] = output["count"].where(output["count"] > 0, 255)
+
+        return output
 
 
 def make_indices(geomad: Dataset) -> Dataset:

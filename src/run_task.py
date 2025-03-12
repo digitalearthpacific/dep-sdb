@@ -21,76 +21,8 @@ from dep_tools.task import AwsStacTask as Task
 from dep_tools.writers import AwsDsCogWriter
 from odc.stac import configure_s3_access
 from typing_extensions import Annotated
-from utils import do_prediction, make_indices, mask_deeps, mask_land
+from utils import do_prediction, make_indices, mask_deeps, mask_land, SDBProcessor, S2_BANDS
 from xarray import DataArray, Dataset
-
-S2_BANDS = [
-    "nir",
-    "red",
-    "blue",
-    "green",
-    "nir08",
-    "nir09",
-    "swir16",
-    "swir22",
-    "coastal",
-    "scl",
-]
-
-
-class SDBProcessor(S2Processor):
-    def __init__(self, model, preprocessor_args, **kwargs):
-        send_area_to_processor: bool = False
-        super().__init__(send_area_to_processor, **preprocessor_args, **kwargs)
-        self.model = model
-
-    def process(self, input: DataArray) -> Dataset:
-        # Raise an exception if there's not enough data
-        if input.time.size < 5:
-            raise EmptyCollectionError(
-                f"{input.time.size} is less than {self.min_timesteps} timesteps"
-            )
-
-        # Drop the SCL band
-        data = input.drop_vars(["scl"])
-
-        # Add the fancy indices
-        data = make_indices(data)
-
-        # Mask land
-        data = mask_land(data)
-
-        # # Mask deep water
-        data = mask_deeps(data)
-
-        predictions_list = []
-
-        def process_day(day):
-            # Load day into memory
-            day_data = data.sel(time=day).compute()
-            # Do prediction on in-memory data
-            return do_prediction(day_data, self.model)
-
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            predictions_list = list(executor.map(process_day, data.time))
-
-        # Concatenate them all together again
-        predictions = xr.concat(predictions_list, dim="time").to_dataset(
-            name="elevation"
-        )
-
-        # Clean up the data by removing pixels that only had predictions sometimes
-        output = predictions.elevation.count(dim="time").to_dataset(name="count")
-        total = len(predictions.time)
-
-        # At least X% of the time there was a prediction
-        mask = output["count"] > (total * 0.15)
-
-        output["mean"] = predictions.elevation.mean(dim="time")
-        output["stdev"] = predictions.elevation.std(dim="time")
-        output["depth"] = output["mean"].where(mask)
-
-        return output
 
 
 def get_logger(region_code: str) -> Logger:
@@ -119,13 +51,13 @@ def main(
     n_workers: int = 2,
     threads_per_worker: int = 32,
     overwrite: Annotated[bool, typer.Option()] = False,
-    scene_filter_cloud_cover_percentage: Annotated[int, typer.Option()] = 100,
+    cloud_cover_lessthan: Annotated[int, typer.Option()] = 100,
+    datetime: Annotated[str, typer.Option()] = "2024",
 ) -> None:
     log = get_logger(tile_id)
     log.info("Starting processing")
 
     grid = PACIFIC_GRID_10
-    datetime = "2024"
     catalog = "https://earth-search.aws.element84.com/v1"
     collection = "sentinel-2-l2a"
 
@@ -172,7 +104,7 @@ def main(
         catalog=catalog,
         collections=[collection],
         datetime=datetime,
-        query={"eo:cloud_cover": {"lt": scene_filter_cloud_cover_percentage}},
+        query={"eo:cloud_cover": {"lt": cloud_cover_lessthan}},
     )
 
     loader = OdcLoader(
