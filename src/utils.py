@@ -58,10 +58,11 @@ locations = Locations()
 
 
 class SDBProcessor(Processor):
-    def __init__(self, model):
+    def __init__(self, model, parallelism):
         self.model = model
+        self.parallelism = parallelism
 
-    def process(self, input: DataArray, parallelism: int = 6) -> Dataset:
+    def process(self, input: DataArray) -> Dataset:
         # Mask clouds from S-2
         data = mask_clouds(input)
 
@@ -85,7 +86,7 @@ class SDBProcessor(Processor):
             # Do prediction on in-memory data
             return do_prediction(day_data, self.model)
 
-        with ThreadPoolExecutor(max_workers=parallelism) as executor:
+        with ThreadPoolExecutor(max_workers=self.parallelism) as executor:
             predictions_list = list(executor.map(process_day, data.time))
 
         # Concatenate them all together again
