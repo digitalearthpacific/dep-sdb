@@ -58,6 +58,8 @@ locations = Locations()
 
 
 class SDBProcessor(Processor):
+    send_area_to_processor = False
+
     def __init__(self, model, parallelism):
         self.model = model
         self.parallelism = parallelism
