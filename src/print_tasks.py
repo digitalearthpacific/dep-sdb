@@ -19,6 +19,7 @@ def print_tasks(
     limit: int = None,
     output_bucket: str = "dep-public-staging",
     output_prefix: str = None,
+    datetime: str = None,
     version: str = None,
 ):
     # Load the coastline grid
@@ -38,7 +39,7 @@ def print_tasks(
                 sensor="s2",
                 dataset_id="sdb",
                 version=version,
-                time=task["year"],
+                time=datetime,
             )
             stac_path = itempath.stac_path(task["tile-id"].split(","))
 
