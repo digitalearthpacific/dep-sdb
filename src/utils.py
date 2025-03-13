@@ -1,14 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
-
 import numpy as np
 import xarray as xr
-from dep_tools.exceptions import EmptyCollectionError
-from dep_tools.processors import S2Processor
+from dep_tools.processors import Processor
 from odc.algo import mask_cleanup
 from odc.stac import load
 from pystac import Item
 from sklearn.base import RegressorMixin
 from xarray import DataArray, Dataset
+from dep_tools.s2_utils import mask_clouds
+from odc.algo import mask_cleanup
 
 
 S2_BANDS = [
@@ -57,15 +57,16 @@ class Locations:
 locations = Locations()
 
 
-class SDBProcessor(S2Processor):
-    def __init__(self, model, preprocessor_args, **kwargs):
-        send_area_to_processor: bool = False
-        super().__init__(send_area_to_processor, **preprocessor_args, **kwargs)
+class SDBProcessor(Processor):
+    def __init__(self, model):
         self.model = model
 
-    def process(self, input: DataArray) -> Dataset:
+    def process(self, input: DataArray, parallelism: int = 6) -> Dataset:
+        # Mask clouds from S-2
+        data = mask_clouds(input)
+
         # Drop the SCL band, because the pre-processor should have masked clouds
-        data = input.drop_vars(["scl"])
+        data = data.drop_vars(["scl"])
 
         # Add the fancy indices
         data = make_indices(data)
@@ -84,7 +85,7 @@ class SDBProcessor(S2Processor):
             # Do prediction on in-memory data
             return do_prediction(day_data, self.model)
 
-        with ThreadPoolExecutor(max_workers=6) as executor:
+        with ThreadPoolExecutor(max_workers=parallelism) as executor:
             predictions_list = list(executor.map(process_day, data.time))
 
         # Concatenate them all together again
@@ -97,7 +98,9 @@ class SDBProcessor(S2Processor):
         total = len(predictions.time)
 
         # At least X% of the time there was a prediction
-        mask = output["count"] > (total * 0.15)
+        mask = output["count"] > (total * 0.20)
+        # Clean up to try to remove single pixel noise
+        mask = mask_cleanup(mask, [["dilation", 2], ["erosion", 2]])
 
         output["mean"] = predictions.elevation.mean(dim="time")
         output["stdev"] = predictions.elevation.std(dim="time")
