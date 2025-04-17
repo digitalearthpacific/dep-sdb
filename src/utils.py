@@ -202,7 +202,7 @@ def apply_mask(
 def mask_deeps_stumpf(
     ds: Dataset,
     ds_to_mask: Dataset | None = None,
-    threshold: float = 2.0,
+    threshold: float = 2.25,
     return_mask: bool = False,
 ) -> Dataset:
     """Masks out deep water pixels based on the Stumpf index.
