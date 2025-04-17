@@ -19,7 +19,7 @@ from dep_tools.writers import AwsDsCogWriter
 from odc.stac import configure_s3_access
 from typing_extensions import Annotated
 
-from utils import S2_BANDS, SDBProcessor
+from utils import S2_BANDS, SDBProcessor, load_model_bundle, get_tide_data
 
 
 def get_logger(region_code: str) -> Logger:
@@ -43,13 +43,15 @@ def main(
     model_zip_uri: Annotated[str, typer.Option()],
     tile_id: Annotated[str, typer.Option()],
     version: Annotated[str, typer.Option()],
+    include_scaler: Annotated[bool, typer.Option()] = False,
+    model_tides: Annotated[bool, typer.Option()] = True,
     output_bucket: str = "dep-public-staging",
-    memory_limit: str = "50GB",
+    memory_limit: str = "40GB",
     n_workers: int = 2,
-    threads_per_worker: int = 32,
+    threads_per_worker: int = 16,
     overwrite: Annotated[bool, typer.Option()] = False,
     cloud_cover_lessthan: Annotated[int, typer.Option()] = 100,
-    datetime: Annotated[str, typer.Option()] = "2024",
+    datetime: Annotated[str, typer.Option()] = "2025-01/2025-03",
     parallelism: Annotated[int, typer.Option()] = 6,
 ) -> None:
     log = get_logger(tile_id)
@@ -60,20 +62,26 @@ def main(
     collection = "sentinel-2-l2a"
 
     # Download the model and unzip it
-    model_zip = "models/" + model_zip_uri.split("/")[-1]
+    model_zip = Path("models") / model_zip_uri.split("/")[-1]
 
-    if not Path(model_zip).exists():
+    if not model_zip.exists():
         log.info(f"Downloading model from {model_zip_uri}")
+        model_zip.parent.mkdir(parents=True, exist_ok=True)
         r = requests.get(model_zip_uri)
         with open(model_zip, "wb") as f:
             f.write(r.content)
 
-        log.info("Unzipping model")
-        with ZipFile(model_zip, "r") as zip_ref:
-            zip_ref.extractall()
+    log.info(f"Unzipping model at {model_zip}")
+    # Extract the zip
+    with ZipFile(model_zip, "r") as zip_ref:
+        zip_ref.extractall()
 
     # Open the model
-    model = joblib.load(model_zip.replace(".zip", ".joblib"))
+    scaler = None
+    if include_scaler:
+        model, scaler = load_model_bundle(model_zip)
+    else:
+        model = joblib.load(model_zip.with_suffix(".joblib"))
 
     tile_index = tuple(int(i) for i in tile_id.split(","))
     geobox = grid.tile_geobox(tile_index)
@@ -82,6 +90,11 @@ def main(
     log.info("Configuring S3 access")
     configure_s3_access(cloud_defaults=True)
     client = boto3.client("s3")
+
+    # If we're modelling tides, get that data early
+    if model_tides:
+        log.info("Getting tide data")
+        get_tide_data(log)
 
     itempath = S3ItemPath(
         bucket=output_bucket,
@@ -112,7 +125,9 @@ def main(
         fail_on_error=False,
     )
 
-    processor = SDBProcessor(model=model, parallelism=parallelism)
+    processor = SDBProcessor(
+        model=model, scaler=scaler, model_tides=model_tides, parallelism=parallelism
+    )
 
     # Custom writer so we write multithreaded
     writer = AwsDsCogWriter(itempath, write_multithreaded=True)

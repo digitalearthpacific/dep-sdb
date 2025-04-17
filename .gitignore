@@ -172,4 +172,7 @@ cython_debug/
 *.csv
 *.joblib
 models/*.txt
+models/*.pkl
+models/*.pt
 *.zip
+__MACOSX

@@ -1,5 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 import numpy as np
+import requests
+from skorch import NeuralNetRegressor
 import xarray as xr
 from dep_tools.processors import Processor
 from odc.algo import mask_cleanup
@@ -9,6 +12,12 @@ from sklearn.base import RegressorMixin
 from xarray import DataArray, Dataset
 from dep_tools.s2_utils import mask_clouds
 from odc.algo import mask_cleanup
+from skorch.callbacks import EarlyStopping, EpochScoring
+
+import torch
+import joblib
+from torch import nn
+from sklearn.preprocessing import StandardScaler
 
 
 S2_BANDS = [
@@ -57,11 +66,65 @@ class Locations:
 locations = Locations()
 
 
+class BathymetryRegressor(nn.Module):
+    def __init__(self, num_features):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(num_features, 64),
+            nn.ReLU(),
+            nn.Linear(64, 128),
+            nn.ReLU(),
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        return self.net(x).squeeze(1)
+
+
+def get_regressor(shape=17):
+    regressor = NeuralNetRegressor(
+        module=BathymetryRegressor,
+        module__num_features=shape,
+        max_epochs=250,
+        lr=0.001,
+        optimizer=torch.optim.AdamW,
+        criterion=nn.SmoothL1Loss,
+        callbacks=[
+            EarlyStopping(patience=10),
+            EpochScoring(scoring="r2", lower_is_better=False, name="r2"),
+        ],
+        # device="mps"  # Comment this line if not using Apple Silicon
+    )
+
+    return regressor
+
+
+def load_model_bundle(zip_file_name: Path = "date_thing.zip", num_features=17):
+    # Load weights
+    model = get_regressor(num_features)
+    model.initialize()
+    model.module_.load_state_dict(torch.load(zip_file_name.with_suffix(".pt")))
+    model.module_.eval()
+
+    # Load scaler
+    scaler = joblib.load(
+        str(zip_file_name.with_suffix(".pkl")).replace("weights", "scaler")
+    )
+
+    return model, scaler
+
+
 class SDBProcessor(Processor):
     send_area_to_processor = False
 
-    def __init__(self, model, parallelism):
+    def __init__(self, model, scaler, model_tides, parallelism):
         self.model = model
+        self.scaler = scaler
+        self.model_tides = model_tides
         self.parallelism = parallelism
 
     def process(self, input: DataArray) -> Dataset:
@@ -74,19 +137,31 @@ class SDBProcessor(Processor):
         # Add the fancy indices
         data = make_indices(data)
 
+        # Mask deep water
+        data, deep_mask = mask_deeps(data, return_mask=True)
+
         # Mask land
         data = mask_land(data)
 
-        # # Mask deep water
-        data = mask_deeps(data)
+        # TODO: Work out how to distribute a pytorch model safely
+        # predictions = do_prediction_dask(
+        #     data,
+        #     self.model,
+        #     output_name="elevation",
+        #     scaler=self.scaler,
+        # ).compute()
 
         predictions_list = []
 
         def process_day(day):
             # Load day into memory
             day_data = data.sel(time=day).compute()
+
             # Do prediction on in-memory data
-            return do_prediction(day_data, self.model)
+            prediction = do_prediction(day_data, self.model)
+            date_str = str(day.values).split("T")[0]
+            print(f"Finished prediction for {date_str}")
+            return prediction
 
         with ThreadPoolExecutor(max_workers=self.parallelism) as executor:
             predictions_list = list(executor.map(process_day, data.time))
@@ -96,29 +171,54 @@ class SDBProcessor(Processor):
             name="elevation"
         )
 
+        if self.model_tides:
+            from dea_tools.coastal import pixel_tides
+
+            tides_highres, _ = pixel_tides(
+                predictions,
+                model="FES2022",
+                directory="/tmp/tide_data/",
+                resample=True
+            )
+            predictions["elevation"] = predictions.elevation + tides_highres
+
+        # TODO: Get rid of this, or bake in percentage masking
         # Clean up the data by removing pixels that only had predictions sometimes
-        output = predictions.elevation.count(dim="time").to_dataset(name="count")
-        total = len(predictions.time)
+        # total = len(predictions.time)
 
         # At least X% of the time there was a prediction
-        mask = output["count"] > (total * 0.20)
+        # mask = output["count"] > (total * 0.20)
         # Clean up to try to remove single pixel noise
-        mask = mask_cleanup(mask, [["dilation", 2], ["erosion", 2]])
+        # mask = mask_cleanup(mask, [["dilation", 2], ["erosion", 2]])
+        # predictions["elevation"] = predictions.elevation.where(mask)
 
+        output = (
+            predictions.elevation.notnull().sum(dim="time").to_dataset(name="count")
+        )
         output["mean"] = predictions.elevation.mean(dim="time")
+        output["median"] = predictions.elevation.median(dim="time")
         output["stdev"] = predictions.elevation.std(dim="time")
-        output["depth"] = output["mean"].where(mask)
+
+        # Capture some meta information, values between 0-1
+        output["pc_pred"] = (
+            predictions.elevation.notnull().astype("uint8").mean(dim="time")
+        )
+        output["pc_deep"] = (~deep_mask).astype("uint8").mean(dim="time")
 
         output["count"] = output["count"].astype("uint8")
         output["mean"] = output["mean"].astype("float32")
+        output["median"] = output["median"].astype("float32")
         output["stdev"] = output["stdev"].astype("float32")
-        output["depth"] = output["depth"].astype("float32")
+
+        output["pc_pred"] = output["pc_pred"].astype("float32")
+        output["pc_deep"] = output["pc_deep"].astype("float32")
 
         # Set count to 255 if it's 0
         output["count"].attrs = {"nodata": 255}
         output["count"] = output["count"].where(output["count"] > 0, 255)
 
-        return output
+        # Silly thing is a dask array again... compute!
+        return output.compute()
 
 
 def make_indices(geomad: Dataset) -> Dataset:
@@ -202,7 +302,7 @@ def apply_mask(
 def mask_deeps_stumpf(
     ds: Dataset,
     ds_to_mask: Dataset | None = None,
-    threshold: float = 2.0,
+    threshold: float = 2.25,  # 2.0 is more conservative
     return_mask: bool = False,
 ) -> Dataset:
     """Masks out deep water pixels based on the Stumpf index.
@@ -283,7 +383,10 @@ def mask_land(
 
 
 def do_prediction(
-    ds: Dataset, model: RegressorMixin, output_name: str | None = None
+    ds: Dataset,
+    model: RegressorMixin,
+    output_name: str | None = None,
+    scaler: StandardScaler = None,
 ) -> Dataset | DataArray:
     """Predicts the model on the dataset and adds the prediction as a new variable.
 
@@ -304,13 +407,29 @@ def do_prediction(
     stacked_arrays = stacked_arrays.where(stacked_arrays != float("-inf"))
 
     # Replace any NaN values with 0
-    stacked_arrays = stacked_arrays.squeeze().fillna(0).transpose().to_pandas()
+    stacked_arrays = stacked_arrays.squeeze().fillna(0).transpose().values
 
-    # Predict the classes
-    predicted = model.predict(stacked_arrays)
+    # Remove the all-zero rows
+    zero_rows = np.all(stacked_arrays == 0, axis=1)
+    non_zero = stacked_arrays[~zero_rows]
+
+    # Create a new array to hold the predictions
+    full_predicted = np.full(zero_rows.shape, np.nan)
+
+    # Only run the prediction if there are non-zero rows
+    if non_zero.size != 0:
+        if scaler is not None:
+            # Scale the data, helps with the neural network model
+            non_zero = scaler.transform(non_zero)
+
+        # Predict the classes
+        predicted = model.predict(non_zero)
+
+        # Fill the new array with the predictions, skipping those old zero rows
+        full_predicted[~zero_rows] = predicted
 
     # Reshape back to the original 2D array
-    array = predicted.reshape(ds.y.size, ds.x.size)
+    array = full_predicted.reshape(ds.y.size, ds.x.size)
 
     # Convert to an xarray again, because it's easier to work with
     predicted_da = xr.DataArray(array, coords={"y": ds.y, "x": ds.x}, dims=["y", "x"])
@@ -323,3 +442,83 @@ def do_prediction(
         return predicted_da
     else:
         return predicted_da.to_dataset(name=output_name)
+
+
+def _predict_block(
+    block: np.ndarray, model: RegressorMixin, scaler: StandardScaler
+) -> np.ndarray:
+    arr2d = block.reshape(-1, block.shape[-1])
+    arr2d = np.nan_to_num(arr2d, nan=0.0, posinf=0.0, neginf=0.0)
+    if scaler is not None:
+        arr2d = scaler.transform(arr2d)
+    preds = model.predict(arr2d)
+    return preds.reshape(block.shape[0], block.shape[1])
+
+
+def do_prediction_dask(
+    ds: xr.Dataset,
+    model: RegressorMixin,
+    output_name: str | None = None,
+    scaler=None,
+) -> xr.Dataset | xr.DataArray:
+    # 1) stack into one DataArray and transpose so core dims are last
+    data = ds.to_array(name="variable").transpose("time", "y", "x", "variable")
+
+    # 3) apply over y,x,variable; time is looped automatically
+    pred = xr.apply_ufunc(
+        _predict_block,
+        data,
+        kwargs={"model": model, "scaler": scaler},
+        input_core_dims=[["y", "x", "variable"]],
+        output_core_dims=[["y", "x"]],
+        vectorize=False,
+        dask="parallelized",
+        output_dtypes=[float],
+        dask_gufunc_kwargs={"allow_rechunk": True},
+    )
+
+    # 4) re‑apply your mask and return
+    mask = ds.red.isnull()
+    pred = pred.where(~mask)
+
+    return pred.to_dataset(name=output_name) if output_name else pred
+
+
+def get_tide_data(log=None):
+    """Get the tide data from the URLs in the file.
+
+    Args:
+        urls (str, optional): URL to the file with the URLs.
+    """
+    # Get the URLs from the file
+    r = requests.get(
+        "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/fes2022b/tide_data_urls.txt"
+    )
+    urls = r.text.split("\n")
+
+    # Download each file into /tmp/tide_data if it doesn't already exist
+    # Replace "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/" with "/tmp/tide_data/"
+    strip_base = "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/"
+    base = Path("/tmp/tide_data")
+    base.mkdir(parents=True, exist_ok=True)
+
+    downloaded = 0
+    existing = 0
+
+    def download_file(url):
+        filename = url.replace(strip_base, "")
+        filepath = base / filename
+        if not filepath.exists():
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            r = requests.get(url)
+            with open(filepath, "wb") as f:
+                f.write(r.content)
+            downloaded += 1
+        else:
+            existing += 1
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        executor.map(download_file, urls)
+
+    if log is not None:
+        log.info(f"Downloaded {downloaded} tide files, {existing} already existed.")
