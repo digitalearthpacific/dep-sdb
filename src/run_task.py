@@ -49,6 +49,7 @@ def main(
     threads_per_worker: int = 32,
     overwrite: Annotated[bool, typer.Option()] = False,
     cloud_cover_lessthan: Annotated[int, typer.Option()] = 60,
+    model_tides: Annotated[bool, typer.Option()] = True,
     datetime: Annotated[str, typer.Option()] = "2025-01/2025-03",
     parallelism: Annotated[int, typer.Option()] = 8,
 ) -> None:
@@ -112,7 +113,9 @@ def main(
         fail_on_error=False,
     )
 
-    processor = SDBProcessor(model=model, parallelism=parallelism)
+    processor = SDBProcessor(
+        model=model, model_tides=model_tides, parallelism=parallelism
+    )
 
     # Custom writer so we write multithreaded
     writer = AwsDsCogWriter(itempath, write_multithreaded=True)
