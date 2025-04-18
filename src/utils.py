@@ -71,16 +71,17 @@ class SDBProcessor(Processor):
         # Mask clouds from S-2
         data = mask_clouds(input)
 
-        # Drop the SCL band, because the pre-processor should have masked clouds
+        # Drop the SCL band, we don't need it no more
         data = data.drop_vars(["scl"])
 
         # Add the fancy indices
         data = make_indices(data)
-        # Mask deep water
-        data, deep_mask = mask_deeps(data, return_mask=True)
 
         # Mask land
         data = mask_land(data)
+
+        # Mask deep water
+        data, deep_mask = mask_deeps(data, return_mask=True)
 
         predictions_list = []
 
@@ -90,6 +91,8 @@ class SDBProcessor(Processor):
             # Do prediction on in-memory data
             return do_prediction(day_data, self.model)
 
+        # Run multiple days in parallel. Alternately, we could use dask
+        # and chunks... but I had some trouble with pickling models.
         with ThreadPoolExecutor(max_workers=self.parallelism) as executor:
             predictions_list = list(executor.map(process_day, data.time))
 
@@ -98,6 +101,7 @@ class SDBProcessor(Processor):
             name="elevation"
         )
 
+        # Model tides, and add to the elevation
         if self.model_tides:
             from eo_tides import pixel_tides
 
@@ -105,6 +109,16 @@ class SDBProcessor(Processor):
                 predictions, model="FES2022", directory="/tmp/tide_data/", resample=True
             )
             predictions["elevation"] = predictions.elevation + tides_highres
+
+        # Here we create the final bands.
+        # We're writing:
+        # - count: number of observations
+        # - mean: mean of the observations
+        # - median: median of the observations
+        # - stdev: standard deviation of the observations
+        # - pc_pred: percentage of pixels predicted
+        # - pc_deep: percentage of pixels deep
+        # - depth: the median depth, masked out where the percentage deep is < 0.5
 
         output = (
             predictions.elevation.notnull().sum(dim="time").to_dataset(name="count")
@@ -134,7 +148,7 @@ class SDBProcessor(Processor):
         # Pick an actual mask and value
         output["depth"] = output["median"].where(
             output.pc_deep < 0.5
-        )  # 0.7 results in noisy ocean...
+        )  # 0.7 results in noisy ocean... we might want it though
         output["depth"] = output["depth"].astype("float32")
 
         # Silly thing is a dask array again... compute!
@@ -342,7 +356,7 @@ def do_prediction(
         full_pred.loc[~zero_mask] = preds
 
     # Reshape back to the original 2D array
-    array = full_pred.reshape(ds.y.size, ds.x.size)
+    array = full_pred.to_numpy().reshape(ds.y.size, ds.x.size)
 
     # Convert to an xarray again, because it's easier to work with
     predicted_da = xr.DataArray(array, coords={"y": ds.y, "x": ds.x}, dims=["y", "x"])
@@ -375,9 +389,6 @@ def get_tide_data(log=None):
     base = Path("/tmp/tide_data")
     base.mkdir(parents=True, exist_ok=True)
 
-    downloaded = 0
-    existing = 0
-
     def download_file(url):
         filename = url.replace(strip_base, "")
         filepath = base / filename
@@ -386,12 +397,17 @@ def get_tide_data(log=None):
             r = requests.get(url)
             with open(filepath, "wb") as f:
                 f.write(r.content)
-            downloaded += 1
+            return True
         else:
-            existing += 1
+            return False
 
     with ThreadPoolExecutor(max_workers=4) as executor:
-        executor.map(download_file, urls)
+        results = executor.map(download_file, urls)
+
+    downloaded = sum(results)
+    existing = len(urls) - downloaded
 
     if log is not None:
-        log.info(f"Downloaded {downloaded} tide files, {existing} already existed.")
+        log.info(
+            f"Downloaded {downloaded} out of {len(urls)} tide files, skipping {existing}."
+        )
