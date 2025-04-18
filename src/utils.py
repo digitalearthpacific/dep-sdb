@@ -1,7 +1,9 @@
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import requests
 import xarray as xr
 from dep_tools.processors import Processor
 from dep_tools.s2_utils import mask_clouds
@@ -353,3 +355,43 @@ def do_prediction(
         return predicted_da
     else:
         return predicted_da.to_dataset(name=output_name)
+
+
+def get_tide_data(log=None):
+    """Get the tide data from the URLs in the file.
+
+    Args:
+        urls (str, optional): URL to the file with the URLs.
+    """
+    # Get the URLs from the file
+    r = requests.get(
+        "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/fes2022b/tide_data_urls.txt"
+    )
+    urls = r.text.split("\n")
+
+    # Download each file into /tmp/tide_data if it doesn't already exist
+    # Replace "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/" with "/tmp/tide_data/"
+    strip_base = "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/"
+    base = Path("/tmp/tide_data")
+    base.mkdir(parents=True, exist_ok=True)
+
+    downloaded = 0
+    existing = 0
+
+    def download_file(url):
+        filename = url.replace(strip_base, "")
+        filepath = base / filename
+        if not filepath.exists():
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            r = requests.get(url)
+            with open(filepath, "wb") as f:
+                f.write(r.content)
+            downloaded += 1
+        else:
+            existing += 1
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        executor.map(download_file, urls)
+
+    if log is not None:
+        log.info(f"Downloaded {downloaded} tide files, {existing} already existed.")
