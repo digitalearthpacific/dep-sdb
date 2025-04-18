@@ -100,10 +100,7 @@ class SDBProcessor(Processor):
             from dea_tools.coastal import pixel_tides
 
             tides_highres, _ = pixel_tides(
-                predictions,
-                model="FES2022",
-                directory="/tmp/tide_data/",
-                resample=True
+                predictions, model="FES2022", directory="/tmp/tide_data/", resample=True
             )
             predictions["elevation"] = predictions.elevation + tides_highres
 
@@ -133,7 +130,9 @@ class SDBProcessor(Processor):
         output["count"] = output["count"].where(output["count"] > 0, 255)
 
         # Pick an actual mask and value
-        output["depth"] = output["median"].where(output.pc_deep < 0.5)  # 0.7 results in noisy ocean...
+        output["depth"] = output["median"].where(
+            output.pc_deep < 0.5
+        )  # 0.7 results in noisy ocean...
         output["depth"] = output["depth"].astype("float32")
 
         # Silly thing is a dask array again... compute!
