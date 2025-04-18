@@ -19,7 +19,7 @@ from dep_tools.writers import AwsDsCogWriter
 from odc.stac import configure_s3_access
 from typing_extensions import Annotated
 
-from utils import S2_BANDS, SDBProcessor
+from utils import S2_BANDS, SDBProcessor, get_tide_data
 
 
 def get_logger(region_code: str) -> Logger:
@@ -83,6 +83,11 @@ def main(
     log.info("Configuring S3 access")
     configure_s3_access(cloud_defaults=True)
     client = boto3.client("s3")
+
+    # If we're modelling tides, get that data early
+    if model_tides:
+        log.info("Getting tide data")
+        get_tide_data(log)
 
     itempath = S3ItemPath(
         bucket=output_bucket,
