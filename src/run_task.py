@@ -48,9 +48,9 @@ def main(
     n_workers: int = 2,
     threads_per_worker: int = 32,
     overwrite: Annotated[bool, typer.Option()] = False,
-    cloud_cover_lessthan: Annotated[int, typer.Option()] = 100,
-    datetime: Annotated[str, typer.Option()] = "2024",
-    parallelism: Annotated[int, typer.Option()] = 6,
+    cloud_cover_lessthan: Annotated[int, typer.Option()] = 60,
+    datetime: Annotated[str, typer.Option()] = "2025-01/2025-03",
+    parallelism: Annotated[int, typer.Option()] = 8,
 ) -> None:
     log = get_logger(tile_id)
     log.info("Starting processing")

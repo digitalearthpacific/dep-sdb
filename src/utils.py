@@ -60,8 +60,9 @@ locations = Locations()
 class SDBProcessor(Processor):
     send_area_to_processor = False
 
-    def __init__(self, model, parallelism):
+    def __init__(self, model, model_tides, parallelism):
         self.model = model
+        self.model_tides = model_tides
         self.parallelism = parallelism
 
     def process(self, input: DataArray) -> Dataset:
@@ -73,12 +74,11 @@ class SDBProcessor(Processor):
 
         # Add the fancy indices
         data = make_indices(data)
+        # Mask deep water
+        data, deep_mask = mask_deeps(data, return_mask=True)
 
         # Mask land
         data = mask_land(data)
-
-        # # Mask deep water
-        data = mask_deeps(data)
 
         predictions_list = []
 
@@ -96,29 +96,48 @@ class SDBProcessor(Processor):
             name="elevation"
         )
 
-        # Clean up the data by removing pixels that only had predictions sometimes
-        output = predictions.elevation.count(dim="time").to_dataset(name="count")
-        total = len(predictions.time)
+        if self.model_tides:
+            from dea_tools.coastal import pixel_tides
 
-        # At least X% of the time there was a prediction
-        mask = output["count"] > (total * 0.20)
-        # Clean up to try to remove single pixel noise
-        mask = mask_cleanup(mask, [["dilation", 2], ["erosion", 2]])
+            tides_highres, _ = pixel_tides(
+                predictions,
+                model="FES2022",
+                directory="/tmp/tide_data/",
+                resample=True
+            )
+            predictions["elevation"] = predictions.elevation + tides_highres
 
+        output = (
+            predictions.elevation.notnull().sum(dim="time").to_dataset(name="count")
+        )
         output["mean"] = predictions.elevation.mean(dim="time")
+        output["median"] = predictions.elevation.median(dim="time")
         output["stdev"] = predictions.elevation.std(dim="time")
-        output["depth"] = output["mean"].where(mask)
+
+        # Capture some meta information, values between 0-1
+        output["pc_pred"] = (
+            predictions.elevation.notnull().astype("uint8").mean(dim="time")
+        )
+        output["pc_deep"] = (~deep_mask).astype("uint8").mean(dim="time")
 
         output["count"] = output["count"].astype("uint8")
         output["mean"] = output["mean"].astype("float32")
+        output["median"] = output["median"].astype("float32")
         output["stdev"] = output["stdev"].astype("float32")
-        output["depth"] = output["depth"].astype("float32")
+
+        output["pc_pred"] = output["pc_pred"].astype("float32")
+        output["pc_deep"] = output["pc_deep"].astype("float32")
 
         # Set count to 255 if it's 0
         output["count"].attrs = {"nodata": 255}
         output["count"] = output["count"].where(output["count"] > 0, 255)
 
-        return output
+        # Pick an actual mask and value
+        output["depth"] = output["median"].where(output.pc_deep < 0.5)  # 0.7 results in noisy ocean...
+        output["depth"] = output["depth"].astype("float32")
+
+        # Silly thing is a dask array again... compute!
+        return output.compute()
 
 
 def make_indices(geomad: Dataset) -> Dataset:
@@ -202,7 +221,7 @@ def apply_mask(
 def mask_deeps_stumpf(
     ds: Dataset,
     ds_to_mask: Dataset | None = None,
-    threshold: float = 2.25,
+    threshold: float = 2.25,  # 2.0 is more conservative
     return_mask: bool = False,
 ) -> Dataset:
     """Masks out deep water pixels based on the Stumpf index.
@@ -304,13 +323,25 @@ def do_prediction(
     stacked_arrays = stacked_arrays.where(stacked_arrays != float("-inf"))
 
     # Replace any NaN values with 0
-    stacked_arrays = stacked_arrays.squeeze().fillna(0).transpose().to_pandas()
+    stacked_arrays = stacked_arrays.squeeze().fillna(0).transpose().values
 
-    # Predict the classes
-    predicted = model.predict(stacked_arrays)
+    # Remove the all-zero rows
+    zero_rows = np.all(stacked_arrays == 0, axis=1)
+    non_zero = stacked_arrays[~zero_rows]
+
+    # Create a new array to hold the predictions
+    full_predicted = np.full(zero_rows.shape, np.nan)
+
+    # Only run the prediction if there are non-zero rows
+    if non_zero.size != 0:
+        # Predict the classes
+        predicted = model.predict(non_zero)
+
+        # Fill the new array with the predictions, skipping those old zero rows
+        full_predicted[~zero_rows] = predicted
 
     # Reshape back to the original 2D array
-    array = predicted.reshape(ds.y.size, ds.x.size)
+    array = full_predicted.reshape(ds.y.size, ds.x.size)
 
     # Convert to an xarray again, because it's easier to work with
     predicted_da = xr.DataArray(array, coords={"y": ds.y, "x": ds.x}, dims=["y", "x"])
