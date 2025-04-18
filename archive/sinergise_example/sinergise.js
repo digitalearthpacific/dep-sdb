@@ -34,7 +34,7 @@ var m1=155.86;
 var m0=146.46;
 // 6.b) If m1 and m0 unknown, preAnalysis=true (above) and pre-analysis of pSDB is necessary to evaluate m1 and m0! This step is done "off the platform" (EXAMPLE TUTORIAL IN SUPPLEMENTARY MATERIAL). In this case mp, pSDBmin, pSDBmax, nConst are applicable
 //multiplier for pSDB output value in GREEN CHANNEL, recommended 1000
-var mp=1000; 
+var mp=1000;
 //pSDBmin,pSDBmax are clamped output range [0-1] of Sentinel Hub in READ CHANNEL
 //Recommended 0.201 and 4.983 - theoretical minimum and maximum values of pSDB. If higher accuracy is needed, values 0.565 and 1.769 might be appropriate too. For latter, color values range of pSDB is bigger
 var pSDBmin=0.201; // pSDB<=pSDBmin -> Sentinel Hub returns 0 for red channel
@@ -121,7 +121,7 @@ function evaluatePixel(p) {
 			//if preAnalysis=false, calc final SDB
 			if (!preAnalysis) {sdb=getSdb(psdb,m1,m0);}
 			wAvg=wAvg+w;psdbAvg=psdbAvg+psdb;sdbAvg=sdbAvg+sdb;bAvg=bAvg+bi;gAvg=gAvg+gi;rAvg=rAvg+ri;
-		} 
+		}
 	}
 	N=N-trimNavg;
 	wAvg=wAvg/N;bAvg=bAvg/N;gAvg=gAvg/N;rAvg=rAvg/N;psdbAvg=psdbAvg/N;sdbAvg=sdbAvg/N;
@@ -129,6 +129,6 @@ function evaluatePixel(p) {
 	let psdbCol=colorBlend(psdbAvg,[pSDBmin,pSDBmax],[[0,0,0],[1,0,1]])
 	psdbCol[1]=psdbAvg*mp;
 	//bath color: psdb||sdb(cs0||1||2)
-	let bath=(preAnalysis)?psdbCol:((cs==0)?cs0.getColorFromValue(sdbAvg):((cs==1)?colorBlend(sdbAvg,[0, 18],[[0,1,1],[0,0,0.7]]):colorBlend(sdbAvg,[0, 18],[[0,0,1],[0,0,0]])));	
+	let bath=(preAnalysis)?psdbCol:((cs==0)?cs0.getColorFromValue(sdbAvg):((cs==1)?colorBlend(sdbAvg,[0, 18],[[0,1,1],[0,0,0.7]]):colorBlend(sdbAvg,[0, 18],[[0,0,1],[0,0,0]])));
 	return (wAvg>=0.1)?bath:[rAvg*2,gAvg*2,bAvg*2];
 }

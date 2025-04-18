@@ -1,10 +1,10 @@
-import typer
-import geopandas as gpd
-import sys
 import json
+import sys
 
-from dep_tools.aws import object_exists
+import geopandas as gpd
+import typer
 from boto3 import client
+from dep_tools.aws import object_exists
 from dep_tools.namers import S3ItemPath
 
 COASTLINE_GRID = "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/buffered_coastline_grid.gpkg"

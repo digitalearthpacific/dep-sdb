@@ -1,15 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import xarray as xr
 from dep_tools.processors import Processor
+from dep_tools.s2_utils import mask_clouds
 from odc.algo import mask_cleanup
 from odc.stac import load
 from pystac import Item
 from sklearn.base import RegressorMixin
 from xarray import DataArray, Dataset
-from dep_tools.s2_utils import mask_clouds
-from odc.algo import mask_cleanup
-
 
 S2_BANDS = [
     "nir",
