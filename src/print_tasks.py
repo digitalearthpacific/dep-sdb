@@ -17,7 +17,6 @@ def print_tasks(
     overwrite: bool = False,
     limit: int = None,
     output_bucket: str = "dep-public-staging",
-    output_prefix: str = None,
     datetime: str = "2025",
     version: str = "0.0.0",
 ):
@@ -40,9 +39,6 @@ def print_tasks(
                 time=datetime,
             )
             stac_path = itempath.stac_path(tile_id)
-
-            if output_prefix is not None:
-                stac_path = f"{output_prefix}/{stac_path}"
 
             if not object_exists(output_bucket, stac_path, client=s3_client):
                 valid_tile_ids.append(tile_id)

@@ -62,10 +62,11 @@ locations = Locations()
 class SDBProcessor(Processor):
     send_area_to_processor = False
 
-    def __init__(self, model, model_tides, parallelism):
+    def __init__(self, model, model_tides, parallelism, percent_deep_threshold=0.7):
         self.model = model
         self.model_tides = model_tides
         self.parallelism = parallelism
+        self.percent_deep_threshold = percent_deep_threshold
 
     def process(self, input: DataArray) -> Dataset:
         # Mask clouds from S-2
@@ -137,12 +138,6 @@ class SDBProcessor(Processor):
         output["pc_deep"] = (~deep_mask).astype("uint8").mean(dim="time")
 
         output["count"] = output["count"].astype("uint8")
-        output["mean"] = output["mean"].astype("float32")
-        output["median"] = output["median"].astype("float32")
-        output["stdev"] = output["stdev"].astype("float32")
-
-        output["pc_pred"] = output["pc_pred"].astype("float32")
-        output["pc_deep"] = output["pc_deep"].astype("float32")
 
         # Set count to 255 if it's 0
         output["count"].attrs = {"nodata": 255}
@@ -150,9 +145,11 @@ class SDBProcessor(Processor):
 
         # Pick an actual mask and value
         output["depth"] = output["median"].where(
-            output.pc_deep < 0.5
-        )  # 0.7 results in noisy ocean... we might want it though
-        output["depth"] = output["depth"].astype("float32")
+            output.pc_deep < self.percent_deep_threshold
+        )
+
+        for var in ["mean", "median", "stdev", "pc_pred", "pc_deep", "depth"]:
+            output[var] = output[var].astype("float32")
 
         # Silly thing is a dask array again... compute!
         return output.compute()

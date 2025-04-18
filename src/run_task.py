@@ -49,6 +49,7 @@ def main(
     threads_per_worker: int = 32,
     overwrite: Annotated[bool, typer.Option()] = False,
     cloud_cover_lessthan: Annotated[int, typer.Option()] = 60,
+    percent_deep_threshold: Annotated[float, typer.Option()] = 0.7,
     model_tides: Annotated[bool, typer.Option()] = True,
     datetime: Annotated[str, typer.Option()] = "2025-01/2025-03",
     parallelism: Annotated[int, typer.Option()] = 8,
@@ -119,7 +120,10 @@ def main(
     )
 
     processor = SDBProcessor(
-        model=model, model_tides=model_tides, parallelism=parallelism
+        model=model,
+        model_tides=model_tides,
+        parallelism=parallelism,
+        percent_deep_threshold=percent_deep_threshold,
     )
 
     # Custom writer so we write multithreaded
