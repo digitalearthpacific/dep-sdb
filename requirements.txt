@@ -1,6 +1,6 @@
 boto3
-dea-tools
 joblib
+eo-tides
 typer
 scikit-learn
 odc-loader==0.5.1

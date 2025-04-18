@@ -97,7 +97,7 @@ class SDBProcessor(Processor):
         )
 
         if self.model_tides:
-            from dea_tools.coastal import pixel_tides
+            from eo_tides import pixel_tides
 
             tides_highres, _ = pixel_tides(
                 predictions, model="FES2022", directory="/tmp/tide_data/", resample=True
