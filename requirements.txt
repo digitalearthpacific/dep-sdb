@@ -1,4 +1,5 @@
 boto3
+dea-tools
 joblib
 typer
 scikit-learn

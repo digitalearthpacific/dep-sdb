@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 from dep_tools.processors import Processor
 from dep_tools.s2_utils import mask_clouds
@@ -321,25 +322,25 @@ def do_prediction(
     stacked_arrays = stacked_arrays.where(stacked_arrays != float("-inf"))
 
     # Replace any NaN values with 0
-    stacked_arrays = stacked_arrays.squeeze().fillna(0).transpose().values
+    df = stacked_arrays.squeeze().fillna(0).transpose().to_pandas()
 
     # Remove the all-zero rows
-    zero_rows = np.all(stacked_arrays == 0, axis=1)
-    non_zero = stacked_arrays[~zero_rows]
+    zero_mask: pd.Series[bool] = (df == 0).all(axis=1)
+    non_zero_df = df.loc[~zero_mask]
 
     # Create a new array to hold the predictions
-    full_predicted = np.full(zero_rows.shape, np.nan)
+    full_pred = pd.Series(np.nan, index=df.index)
 
     # Only run the prediction if there are non-zero rows
-    if non_zero.size != 0:
+    if not non_zero_df.empty:
         # Predict the classes
-        predicted = model.predict(non_zero)
+        preds = model.predict(non_zero_df)
 
         # Fill the new array with the predictions, skipping those old zero rows
-        full_predicted[~zero_rows] = predicted
+        full_pred.loc[~zero_mask] = preds
 
     # Reshape back to the original 2D array
-    array = full_predicted.reshape(ds.y.size, ds.x.size)
+    array = full_pred.reshape(ds.y.size, ds.x.size)
 
     # Convert to an xarray again, because it's easier to work with
     predicted_da = xr.DataArray(array, coords={"y": ds.y, "x": ds.x}, dims=["y", "x"])
