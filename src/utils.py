@@ -140,8 +140,8 @@ class SDBProcessor(Processor):
         output["count"] = output["count"].astype("uint8")
 
         # Set count to 255 if it's 0
-        output["count"].attrs = {"nodata": 255}
         output["count"] = output["count"].where(output["count"] > 0, 255)
+        output["count"].attrs = {"nodata": 255}
 
         # Pick an actual mask and value
         output["depth"] = output["median"].where(
@@ -377,20 +377,20 @@ def get_tide_data(log=None):
     Args:
         urls (str, optional): URL to the file with the URLs.
     """
+    base_url = "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models"
     # Get the URLs from the file
-    r = requests.get(
-        "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/fes2022b/tide_data_urls.txt"
-    )
+    r = requests.get(f"{base_url}/fes2022b/tide_data_urls.txt")
+
+    # Make a list and filter out any empty lines
     urls = r.text.split("\n")
+    urls = [url for url in urls if url.strip()]
 
     # Download each file into /tmp/tide_data if it doesn't already exist
-    # Replace "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/" with "/tmp/tide_data/"
-    strip_base = "https://dep-public-staging.s3.us-west-2.amazonaws.com/dep_ls_coastlines/raw/tidal_models/"
     base = Path("/tmp/tide_data")
     base.mkdir(parents=True, exist_ok=True)
 
     def download_file(url):
-        filename = url.replace(strip_base, "")
+        filename = url.replace(base_url, "")
         filepath = base / filename
         if not filepath.exists():
             filepath.parent.mkdir(parents=True, exist_ok=True)
