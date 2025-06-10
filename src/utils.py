@@ -90,7 +90,10 @@ class SDBProcessor(Processor):
             # Load day into memory
             day_data = data.sel(time=day).compute()
             # Do prediction on in-memory data
-            return do_prediction(day_data, self.model)
+            prediction = do_prediction(day_data, self.model)
+            # Free memory
+            del day_data
+            return prediction
 
         # Run multiple days in parallel. Alternately, we could use dask
         # and chunks... but I had some trouble with pickling models.
