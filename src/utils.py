@@ -393,7 +393,7 @@ def get_tide_data(log=None):
     base.mkdir(parents=True, exist_ok=True)
 
     def download_file(url):
-        filename = url.replace(base_url, "")
+        filename = url.replace(base_url + "/", "")
         filepath = base / filename
         if not filepath.exists():
             filepath.parent.mkdir(parents=True, exist_ok=True)
