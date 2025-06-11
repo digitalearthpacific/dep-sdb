@@ -1,6 +1,7 @@
 boto3
-joblib
 eo-tides
+ipython
+joblib
 typer
 scikit-learn
 pytmd==2.2.4
