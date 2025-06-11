@@ -61,6 +61,26 @@ def main(
     catalog = "https://earth-search.aws.element84.com/v1"
     collection = "sentinel-2-l2a"
 
+    # Make sure we can access S3
+    log.info("Configuring S3 access")
+    configure_s3_access(cloud_defaults=True)
+    client = boto3.client("s3")
+
+    itempath = S3ItemPath(
+        bucket=output_bucket,
+        sensor="s2",
+        dataset_id="sdb",
+        version=version,
+        time=datetime,
+    )
+    stac_document = itempath.stac_path(tile_id)
+
+    # If we don't want to overwrite, and the destination file already exists, skip it
+    if not overwrite and object_exists(output_bucket, stac_document, client=client):
+        log.info(f"Item already exists at {stac_document}")
+        # This is an exit with success
+        raise typer.Exit()
+
     # Download the model and unzip it
     model_zip = "models/" + model_zip_uri.split("/")[-1]
 
@@ -80,30 +100,10 @@ def main(
     tile_index = tuple(int(i) for i in tile_id.split(","))
     geobox = grid.tile_geobox(tile_index)
 
-    # Make sure we can access S3
-    log.info("Configuring S3 access")
-    configure_s3_access(cloud_defaults=True)
-    client = boto3.client("s3")
-
     # If we're modelling tides, get that data early
     if model_tides:
         log.info("Getting tide data")
         get_tide_data(log)
-
-    itempath = S3ItemPath(
-        bucket=output_bucket,
-        sensor="s2",
-        dataset_id="sdb",
-        version=version,
-        time=datetime,
-    )
-    stac_document = itempath.stac_path(tile_id)
-
-    # If we don't want to overwrite, and the destination file already exists, skip it
-    if not overwrite and object_exists(output_bucket, stac_document, client=client):
-        log.info(f"Item already exists at {stac_document}")
-        # This is an exit with success
-        raise typer.Exit()
 
     searcher = PystacSearcher(
         catalog=catalog,
