@@ -1,3 +1,4 @@
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -18,8 +19,6 @@ S2_BANDS = [
     "red",
     "blue",
     "green",
-    "nir08",
-    "nir09",
     "swir16",
     "swir22",
     "coastal",
@@ -111,7 +110,7 @@ class SDBProcessor(Processor):
 
             tides = pixel_tides(
                 predictions,
-                model="FES2022_load",
+                model="FES2022_extrapolated",
                 directory="/tmp/tide_data/",
                 resample=True,
             )
@@ -162,7 +161,7 @@ def make_indices(geomad: Dataset) -> Dataset:
     scaled = (geomad / 10000).clip(0, 1)
 
     # Add some indices
-    geomad["ndvi"] = (scaled.nir - scaled.red) / (scaled.nir + scaled.red)
+    # geomad["ndvi"] = (scaled.nir - scaled.red) / (scaled.nir + scaled.red)
     geomad["ndwi"] = (scaled.green - scaled.nir) / (scaled.green + scaled.nir)
     geomad["mndwi"] = (scaled.green - scaled.swir16) / (scaled.green + scaled.swir16)
     geomad["ndti"] = (scaled.red - scaled.green) / (scaled.red + scaled.green)
@@ -174,7 +173,7 @@ def make_indices(geomad: Dataset) -> Dataset:
     # Blue over green index
     geomad["bg"] = scaled.blue / scaled.green
     # Blue over red index
-    geomad["br"] = scaled.blue / scaled.red
+    # geomad["br"] = scaled.blue / scaled.red
 
     # Natural log of blue/green
     geomad["ln_bg"] = np.log(scaled.blue / scaled.green)
@@ -414,3 +413,10 @@ def get_tide_data(log=None):
         log.info(
             f"Downloaded {downloaded} out of {len(urls)} tide files, skipping {existing}."
         )
+
+    # Move the /tmp/tide_data/fes2022b/ocean_tide folder to /tmp/tide_data/fes2022b/ocean_tide_extrapolated
+    old = base / "fes2022b" / "ocean_tide"
+    new = base / "fes2022b" / "ocean_tide_extrapolated"
+    shutil.move(str(old), str(new))
+    if log is not None:
+        log.info(f"Moved {old} to {new}")
